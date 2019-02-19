@@ -632,7 +632,8 @@ def scrapAlbum(text):
         list.append(e['value'])
     return list
 
-if len(sys.argv) > 1 and sys.argv[1] == '-scan':
+if len(sys.argv) > 1 and sys.argv[1] == '--scan':
+    print("Initial Library scan")
     scanLibrary()
     sys.exit(0)
 
