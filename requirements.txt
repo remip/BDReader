@@ -1,0 +1,8 @@
+bottle
+requests
+peewee
+rarfile
+Pillow
+Wand
+filetype
+pypdf2
