@@ -1,5 +1,6 @@
 % setdefault('prevpage', 0)
 % setdefault('nextpage', 0)
+% setdefault('action', 'page')
 <!doctype html>
 <html>
  <head>
@@ -12,7 +13,7 @@
   <div class="header">
     <div class="headerleft">
 % if prevpage != 0:
-      <a href="/page/{{prevpage}}">
+      <a href="/{{action}}/{{prevpage}}">
         <img src="/static/icons/previous.svg" title="Previous page" class="icon">
       </a>
 % end
@@ -20,14 +21,15 @@
 
   <div class="headerright">
 % if nextpage != 0:
-    <a href="/page/{{nextpage}}">
+    <a href="/{{action}}/{{nextpage}}">
       <img src="/static/icons/next.svg" title="next.svg" class="icon">
     </a>
 % end
   </div>
 
   <div class="headercenter">
-    <a href="/"><img src="/static/icons/home.svg" title="Homepage" class="icon"></a>
+    <a href="/"><img src="/static/icons/library.svg" title="Library" class="icon"></a>
+    <a href="/author"><img src="/static/icons/team.svg" title="Authors" class="icon"></a>
     <a href="/settings"><img src="/static/icons/settings.svg" title="Settings" class="icon"></a>
     <a href="#" onclick="showSearch();"><img src="/static/icons/search.svg" title="Search" class="icon"></a>
     <a href="/random"><img src="/static/icons/random.svg" title="Random" class="icon"></a>
@@ -37,7 +39,6 @@
 
 </div>
 
-
 <div id="search" class="modal">
   <div class="modal-content">
     <span class="close" onclick="hideModal('search');">&times;</span>
@@ -46,7 +47,13 @@
       <h2>Search</h2>
     </div>
     <div class="content">
-      <form method="POST" action="/result">
+      <form method="GET" onsubmit="return search();">
+        <select id="fieldinput" type="text" name="field">
+         <option value="Title">Title</option>
+         <option value="Author">Author</option>
+         <option value="Publisher">Publisher</option>
+         <option value="Imprint">Imprint</option>
+        </select>
         <input id="searchinput" type="text" name="term">
         <input type="submit" name="go" value="Search">
       </form>
@@ -78,6 +85,12 @@ function hideModal(id) {
 
   modal.style.display = "none";
 
+  return false;
+}
+
+function search() {
+  var url = window.location.origin + '/search/' + document.getElementById("fieldinput").value + '/' + document.getElementById("searchinput").value;
+  location.href=url;
   return false;
 }
 

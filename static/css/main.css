@@ -20,7 +20,7 @@ body {
   display: inline-block;
 }
 .cell {
-  float: left;
+  position: relative;
   width: 177px;
   height: 285px;
   margin: 0 15px 15px 0;
@@ -151,15 +151,28 @@ body {
 }
 
 .read {
-  position: relative;
-  float: right;
-  top: -260px;
-  right: -18px;
+  position: absolute;
+  top: 65px;
+  right: -16px;
   text-align: center;
   line-height: 36px;
 }
 
 .read img {
+  width: 36px;
+  height: 36px;
+  box-shadow: none;
+}
+
+.validated {
+  position: absolute;
+  top: 15px;
+  right: -16px;
+  text-align: center;
+  line-height: 36px;
+}
+
+.validated img {
   width: 36px;
   height: 36px;
   box-shadow: none;

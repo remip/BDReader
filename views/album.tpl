@@ -21,35 +21,69 @@
     <td>{{album.serie.name}}</td>
   </tr>
 
+% if writers:
   <tr>
     <td>Writer:</td>
-    <td>{{writers}}</td>
+    <td>
+% for writer in writers:
+    <a href="/link/author/{{writer}}">{{writer}}</a> 
+%end
+    </td>
   </tr>
+% end
+% if pencillers:
   <tr>
     <td>Penciller:</td>
-    <td>{{pencillers}}</td>
-  </tr><tr>
+    <td>
+% for penciller in pencillers:
+    <a href="/link/author/{{penciller}}">{{penciller}}</a> 
+%end    
+    </td>
+  </tr>
+% end
+% if colorists:
+  <tr>
     <td>Colorist:</td>
-    <td>{{colorists}}</td>
-  </tr><tr>
+    <td>
+% for colorist in colorists:
+    <a href="/link/author/{{colorist}}">{{colorist}}</a> 
+%end
+    </td>
+  </tr>
+%end
+% if album.publisher:
+  <tr>
     <td>Publisher:</td>
-    <td>{{album.publisher}}</td>
-  </tr><tr>
+    <td><a href="/link/publisher/{{album.publisher.name}}">{{album.publisher.name}}</a></td>
+  </tr>
+%end
+% if album.imprint:
+  <tr>
+    <td>Imprint:</td>
+    <td><a href="/link/imprint/{{album.imprint.name}}">{{album.imprint.name}}</a></td>
+  </tr>
+%end
+% if album.year:
+  <tr>
     <td>Year:</td>
     <td>{{album.year}}</td>
-  </tr><tr>
+  </tr>
+% end
+% if album.link:
+  <tr>
     <td>Link:</td>
     <td><a href="{{album.link}}">{{album.link}}</a></td>
-  </tr><tr>
-    <td>Summary</td>
+  </tr>
+% end
+% if album.summary:
+  <tr>
+    <td>Summary:</td>
     <td>{{album.summary}}</td>
   </tr>
+% end
 </table>
 
 <div class="clear"></div>
-
-<a class="btn btn-action btn-read" href="/read/{{serie.urlname}}/{{album.urlname}}">Read</a>
-
 <hr>
 <div class="icontitle" style="float: left;">
   <img src="/static/icons/download.svg" title="Download" class="icon">
@@ -72,6 +106,12 @@
 <div class="icontitle">
   <img src="/static/icons/ok.svg" title="read" class="icon" />
   <a href="/mark/read/{{serie.urlname}}/{{album.urlname}}">Mark as read</a>
+</div>
+% end
+% if album.filetype == 'pdf':
+<div class="icontitle">
+  <img src="/static/icons/settings.svg" title="convert" class="icon" />
+  <a href="/convert/{{serie.urlname}}/{{album.urlname}}">Convert to cbz</a>
 </div>
 % end
 

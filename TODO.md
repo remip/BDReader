@@ -2,10 +2,15 @@
 # TODO list
 
 - infinite scroll
-- author db
 - scrapper bedetheque, comicvine...
-- ComicInfo.xml format
+- ComicInfo.xml format (write)
 - i18n
-- scan in background
+- scan/convert in background
 - multiple libraries (books, magazines, comics...)
-- bookmark list
+- setup.py 
+- service install
+- build with js lib download
+- pure python pdf lib
+- handle duplicate
+- rebuild thumb cache
+- search with contains and direct link with ==

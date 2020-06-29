@@ -3,7 +3,23 @@
   <meta charset="utf-8">
   <link rel="stylesheet" type="text/css" href="/static/css/nav.css">
   <script type="text/javascript" src="/static/js/jquery-3.3.1.min.js"></script>
+  <script type="text/javascript" src="/static/js/NoSleep.js"></script>
   <script type="text/javascript">
+
+  /* prevent android sleep */
+  $(document).ready(function(){
+    var isAndroid = navigator.userAgent.toLowerCase().indexOf("android");
+    var isiPad = navigator.userAgent.toLowerCase().indexOf("ipad");
+    if(isAndroid > -1 || isiPad > -1) 
+    {
+      var noSleep = new NoSleep();
+      document.addEventListener('click', function enableNoSleep() {
+        document.removeEventListener('click', enableNoSleep, false);
+        noSleep.enable();
+      }, false);
+    }     
+});
+
 
   var page = {{page}};
 
@@ -121,3 +137,4 @@
 
 </body>
 </html>
+

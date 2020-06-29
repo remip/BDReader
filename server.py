@@ -4,12 +4,18 @@
 import os
 import io
 import sys
+import time
+import shutil
 import re
 import string
 import unicodedata
 import zipfile
 import rarfile
 import filetype
+import traceback
+import logging
+from logging.handlers import RotatingFileHandler
+from multiprocessing import Process, Lock
 from PIL import Image
 from wand.image import Image as WandImage
 from PyPDF2 import PdfFileReader
@@ -18,18 +24,23 @@ import configparser
 import datetime
 import zipfile
 import rarfile
+from lxml import objectify
 from peewee import *
 from bottle import (route, post, redirect, run, template, static_file, request,
-                    response)
+                    response, abort)
+import humanize
 
 # read configuration file
 config = configparser.ConfigParser()
 config.read('config.ini')
 LIBRARY = config['Default']['library_path']
-CACHE = config['Default']['cache_path']
+DATA = config['Default']['data_path']
+CACHE = os.path.join(DATA, "cache")
 HOST = config['Default']['host']
 PORT = config['Default']['port']
-DB = config['Default']['database']
+DB = os.path.join(DATA, "library.db")
+CONVERTED_ARCHIVE = os.path.join(DATA, "converted")
+ERROR_LOG = os.path.join(DATA, "error.log")
 
 EXT = ['pdf', 'cbz', 'cbr', 'zip', 'rar']
 IMGEXT = ['.png', '.PNG', '.jpg', '.JPG', '.jpeg', '.JPEG']
@@ -38,7 +49,16 @@ itemsByPage = 50
 PDFDPI=300
 MAXDPI=400
 
-ERROR = open("error.log", "a", 1)
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s :: %(levelname)s :: %(message)s')
+file_handler = RotatingFileHandler(ERROR_LOG, 'a', 1000000, 1)
+file_handler.setLevel(logging.ERROR)
+file_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
+stream_handler = logging.StreamHandler()
+stream_handler.setLevel(logging.INFO)
+logger.addHandler(stream_handler)
 
 
 # connect/create database
@@ -93,6 +113,13 @@ class Publisher(Model):
         database = db
         order_by = ('name',)
 
+class Imprint(Model):
+    name = CharField()
+
+    class Meta:
+        database = db
+        order_by = ('name',)
+
 class Album(Model):
     name = CharField(null=True)
     filename = CharField()
@@ -100,8 +127,9 @@ class Album(Model):
     filetype = EnumField(choices=ENUM_EXT, null=True)
     serie = ForeignKeyField(Serie, related_name='serie_albums')
     publisher = ForeignKeyField(Publisher, null=True, related_name='published_albums')
+    imprint = ForeignKeyField(Imprint, null=True, related_name='imprint_albums')
     summary = TextField(null=True)
-    volume = SmallIntegerField(null=True)
+    volume = CharField(null=True)
     pages = SmallIntegerField(null=True)
     year = SmallIntegerField(null=True)
     link = CharField(null=True)
@@ -111,9 +139,9 @@ class Album(Model):
 
     class Meta:
         database = db
-        order_by = ('name',)
+        order_by = ('volume', 'name',)
         indexes = (
-            (('name', 'serie'), True),
+            (('serie', 'name', 'volume'), True),
         )
 
 ENUM_AUTHOR = [
@@ -146,12 +174,23 @@ class Bookmark(Model):
     class Meta:
         database = db
 
+# create db if needed
 if not os.path.isfile(DB):
     db.connect()
-    db.create_tables([Library, Serie, Album, Author, AlbumAuthor, Publisher, Bookmark])
-    print("Database '{}' created".format(DB))
+    db.create_tables([Library, Serie, Album, Author, AlbumAuthor, Publisher, Imprint, Bookmark])
+    logger.info("Database '{}' created".format(DB))
 else:
     db.connect()
+
+#create cache folders if needed
+if not os.path.exists(CACHE):
+    os.mkdir(CACHE)
+    for i in range(100):
+        os.mkdir(os.path.join(CACHE,"{:02d}".format(i)))
+    logger.info("Cache created")
+
+if not os.path.exists(CONVERTED_ARCHIVE):
+    os.mkdir(CONVERTED_ARCHIVE)
 
 @route('/')
 @route('/page/<page>')
@@ -175,14 +214,25 @@ def random():
     return template('random', serie="Random", albums=albums, prevpage=0, nextpage=0)
 
 @route('/last')
-def last():
-    albums = Album.select(Album).order_by(Album.added_date.desc()).limit(50)
-    return template('random', serie="Last", albums=albums)
+@route('/last/<page>')
+def last(page=1):
+    page = int(page)
+    prevpage = 0
+    nextpage = 0
+
+    albums = Album.select(Album).order_by(Album.added_date.desc()).paginate(page, itemsByPage)
+    if page > 1:
+        prevpage = page - 1
+    
+    if Album.select().count() > itemsByPage*page:
+        nextpage = page + 1
+
+    return template('random', serie="Last", albums=albums, prevpage=prevpage, nextpage=nextpage, action='last')
 
 @route('/serie/<serie>')
 def showSerie(serie):
     serie = Serie.get(Serie.urlname == serie)
-    albums = Album.select(Album, Serie).join(Serie).where(Serie.id == serie.id).order_by(Album.volume, Album.name)
+    albums = Album.select(Album, Serie).join(Serie).where(Serie.id == serie.id).order_by(Album.volume.cast('int'), Album.name)
     return template('serie', serie=serie, albums=albums)
 
 @route('/album/<serie>/<album>')
@@ -200,8 +250,8 @@ def showAlbum(serie,album):
     for colorist in Author.select().join(AlbumAuthor).join(Album).where(Album.id == album.id, Author.job == 'colorist'):
         colorists.append(colorist.name)
 
-    return template('album', serie=serie, album=album, writers=", ".join(writers),
-        pencillers=", ".join(pencillers), colorists=", ".join(colorists))
+    return template('album', serie=serie, album=album, writers=writers,
+        pencillers=pencillers, colorists=colorists)
 
 @route('/read/<serie>/<album>')
 @route('/read/<serie>/<album>/<page>')
@@ -217,6 +267,7 @@ def readAlbum(serie, album, page=1):
 
 @route('/getpage/<serie>/<album>/<page>')
 def getPage(serie, album, page):
+    logger.debug("getpage: start"); ts_start = time.time()
     serie = Serie.get(Serie.urlname == serie)
     album = Album.get(Album.serie == serie, Album.urlname == album)
     page = int(page)
@@ -237,17 +288,18 @@ def getPage(serie, album, page):
             image = io.BytesIO(compress.read(filelist[page - 1]))
             compress.close()
             response.headers['Content-Type'] = filetype.guess(image.getvalue())
+            logger.debug("getpage: zip/rar end {}s".format(time.time()-ts_start))
             return image.getvalue()
 
         elif kind.mime == 'application/pdf':
             with WandImage(filename=file + "[" + str(page - 1) + "]", resolution=PDFDPI) as image:
                 image = image.make_blob('png')
             response.headers['Content-Type'] = 'image/png'
+            logger.debug("getpage: pdf end {}s".format(time.time()-ts_start))
             return image
     except:
-        print("Something wrong happens while reading page {}".format(page))
-        e = sys.exc_info()
-        print(e)
+        logger.error("Something wrong happens while reading page {}".format(page))
+        logger.error(traceback.format_exc())
 
 
 @route('/bookmarks')
@@ -295,7 +347,7 @@ def validateAlbum(album):
 def getImage(id):
     id = int(id)
     if id == 0:
-        return static_file('blank.png', root=CACHE)
+        return static_file('blank.png', root='static')
 
     if id < 10:
         id = "0" + str(id)
@@ -306,10 +358,10 @@ def getImage(id):
 
     if os.path.exists(os.path.join(CACHE, key, "{}.jpg".format(id))):
         filepath = os.path.join(key, "{}.jpg".format(id))
-    else:
-        filepath = "blank.png"
-
-    return static_file(filepath, root=CACHE)
+        return static_file(filepath, root=CACHE)
+    
+    return static_file('blank.png', root='static')
+    
 
 @route('/download/<serie>/<album>')
 def download(serie,album):
@@ -322,28 +374,83 @@ def download(serie,album):
 def getStatic(filepath):
     return static_file(filepath, root='static')
 
+def get_size(start_path = '.'):
+    total_size = 0
+    for dirpath, dirnames, filenames in os.walk(start_path):
+        for f in filenames:
+            fp = os.path.join(dirpath, f)
+            total_size += os.path.getsize(fp)
+    return total_size
+
 @route('/settings')
 def settings(newSeries = 0, newAlbums = 0, delSeries = 0, delAlbums = 0):
 
     totalAlbums = Album.select().count()
     totalSeries = Serie.select().count()
+    totalValidated = Album.select().where(Album.validated==True).count()
+    totalCBZ = Album.select().where(Album.filetype == 'cbz').count()
+    totalCBR = Album.select().where(Album.filetype == 'cbr').count()
+    totalPDF = Album.select().where(Album.filetype == 'pdf').count()
+    totalAuthors = Author.select().count()
+
+    totalSize = humanize.naturalsize(get_size(LIBRARY))
 
     return template('settings', newAlbums=newAlbums, newSeries=newSeries,
         delSeries = delSeries, delAlbums = delAlbums,
-        totalAlbums=totalAlbums, totalSeries=totalSeries)
+        totalAlbums=totalAlbums, totalSeries=totalSeries, totalAuthors=totalAuthors,
+        totalValidated=totalValidated, totalCBZ=totalCBZ, totalCBR=totalCBR, totalPDF=totalPDF, totalSize=totalSize)
 
-@route('/search')
-def search():
-    return template('search')
+@route('/search/<field>/<term>')
+def fieldsearch(field, term):
 
-@post('/result')
-def result():
-    term = request.forms.get('term')
+    if field == 'Title':
+        series = Serie.select(Serie, fn.Count(Album.id).alias('count')).join(Album).where(Serie.name.contains(term)).group_by(Serie)
+        albums = Album.select().where(Album.name.contains(term))
+    else :
+        try:
+            Object = globals()[field.capitalize()]
+        except KeyError:
+            abort(500, "Bad search field")
 
-    series = Serie.select(Serie, fn.Count(Album.id).alias('count')).join(Album).where(Serie.name.contains(term)).group_by(Serie)
-    albums = Album.select().where(Album.name.contains(term))
+        if field.capitalize() == 'Author':
+            series = Serie.select(Serie, fn.Count(Album.id.distinct()).alias('count')).join(Album).join(AlbumAuthor).join(Author).where(Author.name.contains(term)).group_by(Serie)
+            albums = Album.select().join(AlbumAuthor).join(Author).where(Author.name.contains(term)).group_by(Album)
+        else:
+            series = Serie.select(Serie, fn.Count(Album.id).alias('count')).join(Album).join(Object).where(Object.name.contains(term)).group_by(Serie)
+            albums = Album.select().join(Object).where(Object.name.contains(term))
 
-    return template('result', series=series, albums=albums)
+    return template('result', series=series, albums=albums, field=field.capitalize(), term=term)
+
+@route('/link/<field>/<term>')
+def exactsearch(field, term):
+
+    try:
+        Object = globals()[field.capitalize()]
+    except KeyError:
+        abort(500, "Bad search field")
+
+    if field.capitalize() == 'Author':
+        series = Serie.select(Serie, fn.Count(Album.id.distinct()).alias('count')).join(Album).join(AlbumAuthor).join(Author).where(Author.name == term).group_by(Serie)
+        albums = Album.select().join(AlbumAuthor).join(Author).where(Author.name == term).group_by(Album)
+    else:
+        series = Serie.select(Serie, fn.Count(Album.id).alias('count')).join(Album).join(Object).where(Object.name == term).group_by(Serie)
+        albums = Album.select().join(Object).where(Object.name == term)
+
+    return template('result', series=series, albums=albums, field=field.capitalize(), term=term)
+
+@route('/author')
+def authorlist():
+    #python_value(lambda idlist: ", ".join(ENUM_AUTHOR[int(i)][1] for i in idlist.split(',')))
+    authors = Author.select(Author.name, 
+                            fn.GROUP_CONCAT(Author.job.distinct()).coerce(False).alias('jobs'), fn.count(Album.id.distinct()).alias('albumcount')
+                           ).join(AlbumAuthor).join(Album).group_by(Author.name).order_by(SQL('albumcount').desc())
+    
+    joblist = {}
+    for x in ENUM_AUTHOR:        
+        joblist[str(x[0])] = x[1]
+
+    return template('author', authors=authors, joblist=joblist)
+
 
 @post('/rename/serie')
 def renameSerie():
@@ -355,7 +462,7 @@ def renameSerie():
     newdir = createFilename(name)
     newurl = createUrl(newdir)
 
-    print("Renaming serie {} to {}, dir: {}, url:{}".format(serie.name, name, newdir, newurl))
+    logger.info("Renaming serie {} to {}, dir: {}, url:{}".format(serie.name, name, newdir, newurl))
 
     os.rename(os.path.join(LIBRARY, serie.dirname), os.path.join(LIBRARY, newdir))
 
@@ -386,7 +493,7 @@ def editAlbum():
         newfile += ' ' + createFilename(name) + '.' + album.filetype
         newurl = createUrl(newurl + name)
 
-        print("Renaming album {} to {}, file: {}, url:{}".format(album.name, name, newfile, newurl))
+        logger.info("Renaming album {} to {}, file: {}, url:{}".format(album.name, name, newfile, newurl))
 
         os.rename(os.path.join(LIBRARY, serie.dirname, album.filename),
             os.path.join(LIBRARY, serie.dirname, newfile))
@@ -411,7 +518,7 @@ def mark(mark, serie, album):
         album.read = False
         album.save()
     else:
-        print("Warning: unknown mark: '{}'".format(mark))
+        logger.info("Warning: unknown mark: '{}'".format(mark))
 
     redirect('/album/{}/{}'.format(serie.urlname, album.urlname))
 
@@ -439,7 +546,7 @@ def scanLibrary():
             serie.name = folder
             serie.urlname = urlname
             serie.save()
-            print("Add Serie {} [{}]".format(folder, urlname))
+            logger.info("Add Serie {} [{}]".format(folder, urlname))
             newSeries += 1
         else:
             dbseries.remove(folder)
@@ -466,17 +573,18 @@ def scanLibrary():
                 if pages > 0:
                     album.pages = pages
                 album.save()
-                print("Add Album {} [{}] {} pages".format(title, urlname, pages))
+                logger.info("Add Album {} [{}] {} pages".format(title, urlname, pages))
                 newAlbums += 1
+                getComicInfo(os.path.join(LIBRARY, folder, file), album)
                 if createThumb(os.path.join(LIBRARY, folder, file), getThumb(album.id)):
                     # update serie if needed
                     if serie.image == 0:
-                        print("Update serie thumbnail")
+                        logger.info("Update serie thumbnail")
                         serie.image = album.id
                         serie.save()
 
     for folder in dbseries:
-        print("Delete {}".format(folder))
+        logger.info("Delete {}".format(folder))
         serie = Serie.get(Serie.name == folder)
         delSeries += 1
         delAlbums += Album.select().where(Album.serie == serie).count()
@@ -543,17 +651,19 @@ def countPages(file):
                 compress = zipfile.ZipFile(file,'r')
             else:
                 compress = rarfile.RarFile(file,'r')
-            #find the page
+            # find the images
             filelist = [f for f in sorted(compress.namelist()) if os.path.splitext(f)[1] in IMGEXT]
             return len(filelist)
 
         elif kind.mime == 'application/pdf':
-            pdf = PdfFileReader(open(file, "rb"))
-            return pdf.getNumPages()
+            pdffile = open(file, "rb")
+            pdf = PdfFileReader(pdffile)
+            num = pdf.getNumPages()
+            pdffile.close()
+            return num
     except:
-        print("Something wrong happens while counting pages of {}".format(file))
-        e = sys.exc_info()
-        print(e)
+        logger.error("Something wrong happens while counting pages of {}".format(file))
+        logger.error(traceback.format_exc())
 
     return 0
 
@@ -566,8 +676,7 @@ def createThumb(file, thumbnail):
         index = 0
         kind = filetype.guess(file)
         if kind is None:
-            print("File type unknown {}".format(file))
-            ERROR.write("File type unknown {}".format(file)+"\n")
+            logger.error("File type unknown {}".format(file))
             return False
         if kind.mime == 'application/zip':
             zip = zipfile.ZipFile(file,'r')
@@ -591,8 +700,7 @@ def createThumb(file, thumbnail):
                 original.save(filename=thumbnail)
                 return True
         else:
-            print("File format not handled {} {}".format(kind.mime, file))
-            ERROR.write("File format not handled {} {}".format(kind.mime, file)+"\n")
+            logger.error("File format not handled {} {}".format(kind.mime, file))
             return False
 
         im = Image.open(cover)
@@ -601,12 +709,9 @@ def createThumb(file, thumbnail):
 
         return True
 
-    except:
-        e = sys.exc_info()
-        print("Cannot create thumbnail {} for {}".format(thumbnail, file))
-        print(e)
-        ERROR.write("Cannot create thumbnail {} for {}".format(thumbnail, file)+"\n")
-        ERROR.write(str(e)+"\n\n")
+    except:        
+        logger.error("Cannot create thumbnail {} for {}".format(thumbnail, file))
+        logger.error(traceback.format_exc())
         return False
 
 @route('/hint/author/<term>')
@@ -616,13 +721,129 @@ def authorHint(term):
 
 @route('/scrap/serie/<text>')
 def scrapSerie(text):
-    print("scrap '{}'".format(text))
+    logger.info("scrap '{}'".format(text))
     #https://www.bedetheque.com/search/albums?RechIdSerie=&RechIdAuteur=&csrf_token_bedetheque=3cc59c74f310bd58b0379d4561eba126&RechSerie=ca+vous+int%C3%A9resse&RechTitre=&RechEditeur=&RechCollection=&RechStyle=&RechAuteur=&RechISBN=&RechParution=&RechOrigine=&RechLangue=&RechMotCle=&RechDLDeb=&RechDLFin=&RechCoteMin=&RechCoteMax=&RechEO=0
     r = requests.get('https://www.bedetheque.com/ajax/series?term={}'.format(text))
     #[{"id":"36","label":"Nef des fous (La)","value":"Nef des fous (La)","desc":"skin\/flags\/France.png"}]
     print(r.text)
 
     return r.text
+
+@route('/convert/<serie>/<album>')
+def convert(serie, album):
+    convert_thread(serie, album)
+    #redirect('/settings')
+
+def convert_thread(serie, album):
+    logger.debug("convert: start"); ts_start = time.time()
+    serie = Serie.get(Serie.urlname == serie)
+    album = Album.get(Album.serie == serie, Album.urlname == album)
+
+    file = os.path.join(LIBRARY, serie.dirname, album.filename)
+    cbzfile = os.path.join(LIBRARY, serie.dirname, createFilename(album.name) + '.cbz')
+
+    try:
+        kind = filetype.guess(file)
+        if kind.mime == 'application/zip' or kind.mime == 'application/x-rar-compressed':
+            # nothing to do !
+            pass
+
+        elif kind.mime == 'application/pdf':
+            with zipfile.ZipFile(cbzfile, 'w', compression=zipfile.ZIP_STORED) as cbz:
+                with WandImage(filename=file, resolution=PDFDPI) as images:
+                    pages = len(images.sequence)
+                    for page in range(pages):
+                        image = WandImage(images.sequence[page]).make_blob('jpeg')
+                        cbz.writestr("page{:03d}.jpeg".format(page+1), image)                        
+
+            logger.debug("convert: end {}s".format(time.time() - ts_start))
+            shutil.move(file, CONVERTED_ARCHIVE)
+            album.filename = cbzfile
+            album.filetype = 'cbz'
+            album.save()
+
+    except:
+        logger.error("Something wrong happens while converting album {}".format(album.name))
+        logger.error(traceback.format_exc())
+
+def getComicInfo(file, album):
+    archive = None
+    try:
+        kind = filetype.guess(file)
+        if kind.mime == 'application/zip':
+            archive = zipfile.ZipFile(file,'r')
+        elif kind.mime == 'application/x-rar-compressed':
+            archive = rarfile.RarFile(file,'r')
+
+        if archive:
+            if 'ComicInfo.xml' in archive.namelist():
+                has_writer = False
+                logger.info("Getting info from ComicInfo.xml")
+                xml = objectify.fromstring(archive.read('ComicInfo.xml'))
+                if hasattr(xml, 'Title'):
+                    logger.debug('Title: {}'.format(xml.Title))
+                    album.name = xml.Title
+                if hasattr(xml, 'Number'):
+                    logger.debug('Number: {}'.format(xml.Number))
+                    album.volume = xml.Number
+                if hasattr(xml, 'Summary'):
+                    logger.debug('Summary: {}'.format(xml.Summary))
+                    album.summary = xml.Summary
+                if hasattr(xml, 'Publisher'):
+                    logger.debug('Publisher: {}'.format(xml.Publisher))
+                    publisher, created = Publisher.get_or_create(name=xml.Publisher)
+                    if created:
+                        publisher.save()
+                    album.publisher = publisher
+                if hasattr(xml, 'Imprint'):
+                    logger.debug('Imprint: {}'.format(xml.Imprint))
+                    imprint, created = Imprint.get_or_create(name=xml.Imprint)
+                    if created:
+                        imprint.save()
+                    album.imprint = imprint
+                if hasattr(xml, 'Year'):
+                    logger.debug('Year: {}'.format(xml.Year))
+                    album.year = xml.Year
+                if hasattr(xml, 'Web'):
+                    logger.debug('Web: {}'.format(xml.Web))
+                    album.link = xml.Web
+                if hasattr(xml, 'Writer'):
+                    for writers in xml.Writer:
+                        for writer in str(writers).split(", "):
+                            logger.debug('Writer: {}'.format(writer))
+                            author, created = Author.get_or_create(name=writer, job='writer')
+                            if created:
+                                author.save()
+                            rel = AlbumAuthor.create(album=album, author=author)
+                            rel.save()
+                    has_writer = True
+                if hasattr(xml, 'Penciller'):
+                    for pencillers in xml.Penciller:
+                        for penciller in str(pencillers).split(", "):
+                            logger.debug('Penciller: {}'.format(penciller))
+                            author, created = Author.get_or_create(name=penciller, job='penciller')
+                            if created:
+                                author.save()
+                            rel = AlbumAuthor.create(album=album, author=author)
+                            rel.save()
+                if hasattr(xml, 'Colorist'):
+                    for colorists in xml.Colorist:
+                        for colorist in str(colorists).split(", "):
+                            logger.debug('Colorist: {}'.format(colorist))
+                            author, created = Author.get_or_create(name=colorist, job='colorist')
+                            if created:
+                                author.save()
+                            rel = AlbumAuthor.create(album=album, author=author)
+                            rel.save()
+                # validate info
+                if has_writer:
+                    album.validated = True
+                album.save()
+    except:
+        logger.error("Something wrong reading ComicInfo.xml from {}".format(file))
+        logger.error(traceback.format_exc())
+        
+
 
 def scrapAlbum(text):
     r = requests.get('https://www.bedetheque.com/ajax/albums?term={}'.format(text))
@@ -632,9 +853,36 @@ def scrapAlbum(text):
         list.append(e['value'])
     return list
 
+
 if len(sys.argv) > 1 and sys.argv[1] == '--scan':
-    print("Initial Library scan")
+    print("Library scan")
     scanLibrary()
     sys.exit(0)
+elif len(sys.argv) > 1 and sys.argv[1] == '--convert':
+    import signal
+    stop = False
+    def handler(signum, frame):
+        global stop
+        stop = True
+    signal.signal(signal.SIGINT, handler)
+    print("Convert PDF to CBZ")
+    pdflist = Album.select().where(Album.filetype == 'pdf')
+    for album in pdflist:
+        print("Convert {} - {}".format(album.serie.name, album.name))
+        convert_thread(album.serie.urlname, album.urlname)
+        if stop:
+            print( "stopping")
+            break
+    sys.exit(0)
+elif len(sys.argv) > 1 and sys.argv[1] == '--todo':    
+    for album in Album.select().where(Album.validated==False).order_by(Album.serie, Album.name):
+        print("{} - {} ({})".format(album.serie.name, album.name, album.filename))
+    sys.exit(0)
+
+
+convert_lock = Lock()
+scan_lock = Lock()
+
+logger.info("Starting BDReader service")
 
 run(host=HOST, port=PORT, reloader=True)

@@ -1,0 +1,16 @@
+
+version: '3'
+
+services:
+  bdreader:
+    build: .
+    container_name: bdreader
+    volumes:
+      - D:\BD\Librarie:/root/Library
+      - bd-data:/root/data
+    ports:
+      - "80:80"
+
+volumes:
+  bd-data:
+    external: true

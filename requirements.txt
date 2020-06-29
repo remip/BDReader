@@ -6,3 +6,5 @@ Pillow
 Wand
 filetype
 pypdf2
+lxml
+humanize

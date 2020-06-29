@@ -23,6 +23,9 @@
 % if album.read:
      <div class="read"><img src="/static/icons/ok.svg" alt="read"/></div>
 % end
+% if album.validated:
+     <div class="validated"><img src="/static/icons/checklist.svg" alt="info validated"/></div>
+% end
     </div>
   </div>
 %end

@@ -3,7 +3,9 @@
 
 <div class="container">
 
-<h2>Series</h2>
+<h3>{{field}}: {{term}}</h3>
+
+<h4>Series ({{len(series)}}):</h4>
 
 % for serie in series:
  <div class="cellcontainer">
@@ -19,7 +21,7 @@
  </div>
 %end
 
-<h2>Albums</h2>
+<h4>Albums ({{len(albums)}}):</h4>
 
 % for album in albums:
  <div class="cellcontainer">

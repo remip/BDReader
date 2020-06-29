@@ -29,7 +29,18 @@
     <td>Total</td>
     <td>{{totalSeries}}</td>
     <td>{{totalAlbums}}</td>
-  </tr>
+  </tr>  
+</table>
+
+<p>
+<table>
+ <tr><th>Stats</th><th>Count</th></tr>
+ <tr><td>Library</td><td>{{totalSize}}</td></tr>
+ <tr><td>cbz</td><td>{{totalCBZ}}</td></tr>
+ <tr><td>cbr</td><td>{{totalCBR}}</td></tr>
+ <tr><td>pdf</td><td>{{totalPDF}}</td></tr>
+ <tr><td>ComicInfo</td><td>{{totalValidated}}</td></tr>
+ <tr><td>Authors</td><td>{{totalAuthors}}</td></tr>
 </table>
 
 </div>
