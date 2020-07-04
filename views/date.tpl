@@ -1,10 +1,19 @@
 % include('header.tpl')
-
+% current_year = 1900
 
 <div class="container">
 
+
+
 <div>
 % for album in albums:
+
+% if album.year != current_year:
+    </div>
+    <h2>{{album.year}}</h2>
+    <div>
+% current_year = album.year
+%end
  <div class="cellcontainer">
   <div class="cell">
    <div class="thumbnail">

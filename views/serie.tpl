@@ -5,6 +5,10 @@
 
   <h2>{{serie.name}}</h2>
 
+% if serie.complete:
+  <div class="icontitle"><img src="/static/icons/tick.svg" class="icon" alt="Complete"/>Complete</div>
+%end
+
   <div>
 % for album in albums:
   <div class="cellcontainer">
@@ -34,6 +38,11 @@
   <div class="icontitle">
     <img src="/static/icons/edit_image.svg" title="rename" class="icon" />
     <a href="#" onclick="showModal('serieName');">Rename serie</a>
+  </div>
+
+   <div class="icontitle">
+    <img src="/static/icons/checklist.svg" title="complete" class="icon" />
+    <a href="/complete/{{serie.urlname}}">Set/unset as complete</a>
   </div>
 
 </div>

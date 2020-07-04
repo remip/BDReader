@@ -26,7 +26,7 @@
     <td>Writer:</td>
     <td>
 % for writer in writers:
-    <a href="/link/author/{{writer}}">{{writer}}</a> 
+    <a href="/link/author/{{writer}}">{{writer}}</a>
 %end
     </td>
   </tr>
@@ -36,8 +36,8 @@
     <td>Penciller:</td>
     <td>
 % for penciller in pencillers:
-    <a href="/link/author/{{penciller}}">{{penciller}}</a> 
-%end    
+    <a href="/link/author/{{penciller}}">{{penciller}}</a>
+%end
     </td>
   </tr>
 % end
@@ -46,7 +46,7 @@
     <td>Colorist:</td>
     <td>
 % for colorist in colorists:
-    <a href="/link/author/{{colorist}}">{{colorist}}</a> 
+    <a href="/link/author/{{colorist}}">{{colorist}}</a>
 %end
     </td>
   </tr>
@@ -114,6 +114,11 @@
   <a href="/convert/{{serie.urlname}}/{{album.urlname}}">Convert to cbz</a>
 </div>
 % end
+
+<div class="icontitle">
+  <img src="/static/icons/settings.svg" title="refresh" class="icon" />
+  <a href="/refresh/{{serie.urlname}}/{{album.urlname}}">Refresh from comicinfo.xml</a>
+</div>
 
 <div class="icontitle">
   <img src="/static/icons/left.svg" title="back" class="icon" />

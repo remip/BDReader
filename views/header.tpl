@@ -33,7 +33,8 @@
     <a href="/settings"><img src="/static/icons/settings.svg" title="Settings" class="icon"></a>
     <a href="#" onclick="showSearch();"><img src="/static/icons/search.svg" title="Search" class="icon"></a>
     <a href="/random"><img src="/static/icons/random.svg" title="Random" class="icon"></a>
-    <a href="/last"><img src="/static/icons/clock.svg" title="Last" class="icon"></a>
+    <a href="/date"><img src="/static/icons/calendar.svg" title="Sort by publication date" class="icon"></a>
+    <a href="/last"><img src="/static/icons/clock.svg" title="Last added" class="icon"></a>
     <a href="/bookmarks"><img src="/static/icons/bookmark.svg" title="Bookmarks" class="icon"></a>
   </div>
 

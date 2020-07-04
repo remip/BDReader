@@ -26,6 +26,7 @@ import zipfile
 import rarfile
 from lxml import objectify
 from peewee import *
+from playhouse.migrate import *
 from bottle import (route, post, redirect, run, template, static_file, request,
                     response, abort)
 import humanize
@@ -83,6 +84,15 @@ class EnumField(IntegerField):
     def python_value(self, value):
         return self.from_db[value]
 
+DB_VERSION = "1.1"
+
+class History(Model):
+    version = CharField()
+    date = DateTimeField(default=datetime.datetime.now)
+
+    class Meta:
+        database = db
+        order_by = ('version',)
 
 class Library(Model):
     name = CharField(unique=True)
@@ -101,6 +111,7 @@ class Serie(Model):
     image = IntegerField(default=0)
     validated = BooleanField(default=False)
     added_date = DateTimeField(default=datetime.datetime.now)
+    complete = BooleanField(default=False)
 
     class Meta:
         database = db
@@ -178,9 +189,29 @@ class Bookmark(Model):
 if not os.path.isfile(DB):
     db.connect()
     db.create_tables([Library, Serie, Album, Author, AlbumAuthor, Publisher, Imprint, Bookmark])
+    History.create(version=DB_VERSION)
     logger.info("Database '{}' created".format(DB))
 else:
     db.connect()
+    try:
+        db_version = History.select(History.version).order_by(History.version.desc()).get().version
+    except:
+        #default to 1.0
+        db_version = "1.0"
+    logger.info("DB version {}".format(db_version))
+    # upgrade DB?
+    if db_version == "1.0":
+        db.create_tables([History])
+        History.create(version=DB_VERSION)
+        migrator = SqliteMigrator(db)
+        complete_field = BooleanField(default=False)
+        migrate(
+            migrator.add_column('serie', 'complete', complete_field),
+        )
+        logger.info("DB upgraded to version {}".format(DB_VERSION))
+        sys.exit(1)
+
+
 
 #create cache folders if needed
 if not os.path.exists(CACHE):
@@ -223,11 +254,27 @@ def last(page=1):
     albums = Album.select(Album).order_by(Album.added_date.desc()).paginate(page, itemsByPage)
     if page > 1:
         prevpage = page - 1
-    
+
     if Album.select().count() > itemsByPage*page:
         nextpage = page + 1
 
     return template('random', serie="Last", albums=albums, prevpage=prevpage, nextpage=nextpage, action='last')
+
+@route('/date')
+@route('/date/<page>')
+def bydate(page=1):
+    page = int(page)
+    prevpage = 0
+    nextpage = 0
+
+    albums = Album.select(Album).order_by(Album.year.desc()).paginate(page, itemsByPage)
+    if page > 1:
+        prevpage = page - 1
+
+    if Album.select().count() > itemsByPage*page:
+        nextpage = page + 1
+
+    return template('date', serie="Date", albums=albums, prevpage=prevpage, nextpage=nextpage, action='date')
 
 @route('/serie/<serie>')
 def showSerie(serie):
@@ -359,9 +406,9 @@ def getImage(id):
     if os.path.exists(os.path.join(CACHE, key, "{}.jpg".format(id))):
         filepath = os.path.join(key, "{}.jpg".format(id))
         return static_file(filepath, root=CACHE)
-    
+
     return static_file('blank.png', root='static')
-    
+
 
 @route('/download/<serie>/<album>')
 def download(serie,album):
@@ -441,16 +488,26 @@ def exactsearch(field, term):
 @route('/author')
 def authorlist():
     #python_value(lambda idlist: ", ".join(ENUM_AUTHOR[int(i)][1] for i in idlist.split(',')))
-    authors = Author.select(Author.name, 
+    authors = Author.select(Author.name,
                             fn.GROUP_CONCAT(Author.job.distinct()).coerce(False).alias('jobs'), fn.count(Album.id.distinct()).alias('albumcount')
                            ).join(AlbumAuthor).join(Album).group_by(Author.name).order_by(SQL('albumcount').desc())
-    
+
     joblist = {}
-    for x in ENUM_AUTHOR:        
+    for x in ENUM_AUTHOR:
         joblist[str(x[0])] = x[1]
 
     return template('author', authors=authors, joblist=joblist)
 
+
+@route("/complete/<urlname>")
+def complete_serie(urlname):
+
+    serie = Serie.get(Serie.urlname == urlname)
+
+    serie.complete = not serie.complete
+    serie.save()
+
+    redirect('/serie/{}'.format(serie.urlname))
 
 @post('/rename/serie')
 def renameSerie():
@@ -528,6 +585,9 @@ def scanLibrary():
     """
         Scan the library path for new series or albums
     """
+
+    logger.info("Starting library scan")
+
     newSeries = 0
     newAlbums = 0
     delSeries = 0
@@ -536,6 +596,10 @@ def scanLibrary():
     dbseries = []
     for serie in Serie.select():
         dbseries.append(serie.name)
+
+    dbalbums = []
+    for album in Album.select():
+        dbalbums.append(album.filename)
 
     folders = [folder for folder in os.listdir(LIBRARY) if os.path.isdir(os.path.join(LIBRARY, folder))]
 
@@ -582,6 +646,8 @@ def scanLibrary():
                         logger.info("Update serie thumbnail")
                         serie.image = album.id
                         serie.save()
+            else:
+                dbalbums.remove(file)
 
     for folder in dbseries:
         logger.info("Delete {}".format(folder))
@@ -589,6 +655,14 @@ def scanLibrary():
         delSeries += 1
         delAlbums += Album.select().where(Album.serie == serie).count()
         serie.delete_instance(recursive=True)
+
+    logger.info("There is {} albums with file missing".format(len(dbalbums)))
+    for filename in dbalbums:
+        delAlbums += 1
+        album = Album.get(Album.filename == filename)
+        album.delete_instance(recursive=True)
+
+    logger.info("Library scan ended")
 
     return settings(newSeries, newAlbums, delSeries, delAlbums)
 
@@ -709,7 +783,7 @@ def createThumb(file, thumbnail):
 
         return True
 
-    except:        
+    except:
         logger.error("Cannot create thumbnail {} for {}".format(thumbnail, file))
         logger.error(traceback.format_exc())
         return False
@@ -754,7 +828,7 @@ def convert_thread(serie, album):
                     pages = len(images.sequence)
                     for page in range(pages):
                         image = WandImage(images.sequence[page]).make_blob('jpeg')
-                        cbz.writestr("page{:03d}.jpeg".format(page+1), image)                        
+                        cbz.writestr("page{:03d}.jpeg".format(page+1), image)
 
             logger.debug("convert: end {}s".format(time.time() - ts_start))
             shutil.move(file, CONVERTED_ARCHIVE)
@@ -765,6 +839,19 @@ def convert_thread(serie, album):
     except:
         logger.error("Something wrong happens while converting album {}".format(album.name))
         logger.error(traceback.format_exc())
+
+
+@route('/refresh/<serie>/<album>')
+def updateComicInfo(serie,album):
+
+    logger.info("Refresh {} / {}".format(serie, album))
+
+    serie = Serie.get(Serie.urlname == serie)
+    album = Album.get(Album.urlname == album, Album.serie == serie)
+
+    getComicInfo(os.path.join(LIBRARY, serie.dirname, album.filename), album)
+
+    redirect('/album/{}/{}'.format(serie.urlname, album.urlname))
 
 def getComicInfo(file, album):
     archive = None
@@ -814,8 +901,9 @@ def getComicInfo(file, album):
                             author, created = Author.get_or_create(name=writer, job='writer')
                             if created:
                                 author.save()
-                            rel = AlbumAuthor.create(album=album, author=author)
-                            rel.save()
+                            rel, created = AlbumAuthor.get_or_create(album=album, author=author)
+                            if created:
+                                rel.save()
                     has_writer = True
                 if hasattr(xml, 'Penciller'):
                     for pencillers in xml.Penciller:
@@ -824,8 +912,9 @@ def getComicInfo(file, album):
                             author, created = Author.get_or_create(name=penciller, job='penciller')
                             if created:
                                 author.save()
-                            rel = AlbumAuthor.create(album=album, author=author)
-                            rel.save()
+                            rel, created = AlbumAuthor.get_or_create(album=album, author=author)
+                            if created:
+                                rel.save()
                 if hasattr(xml, 'Colorist'):
                     for colorists in xml.Colorist:
                         for colorist in str(colorists).split(", "):
@@ -833,8 +922,9 @@ def getComicInfo(file, album):
                             author, created = Author.get_or_create(name=colorist, job='colorist')
                             if created:
                                 author.save()
-                            rel = AlbumAuthor.create(album=album, author=author)
-                            rel.save()
+                            rel, created = AlbumAuthor.get_or_create(album=album, author=author)
+                            if created:
+                                rel.save()
                 # validate info
                 if has_writer:
                     album.validated = True
@@ -842,7 +932,7 @@ def getComicInfo(file, album):
     except:
         logger.error("Something wrong reading ComicInfo.xml from {}".format(file))
         logger.error(traceback.format_exc())
-        
+
 
 
 def scrapAlbum(text):
@@ -874,7 +964,7 @@ elif len(sys.argv) > 1 and sys.argv[1] == '--convert':
             print( "stopping")
             break
     sys.exit(0)
-elif len(sys.argv) > 1 and sys.argv[1] == '--todo':    
+elif len(sys.argv) > 1 and sys.argv[1] == '--todo':
     for album in Album.select().where(Album.validated==False).order_by(Album.serie, Album.name):
         print("{} - {} ({})".format(album.serie.name, album.name, album.filename))
     sys.exit(0)

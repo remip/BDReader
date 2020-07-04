@@ -17,4 +17,4 @@ ADD data ./data/
 
 EXPOSE 80/tcp
 
-CMD [ "python", "./server.py" ]
+CMD [ "python", "-u", "./server.py" ]
