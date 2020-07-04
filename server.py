@@ -188,7 +188,7 @@ class Bookmark(Model):
 # create db if needed
 if not os.path.isfile(DB):
     db.connect()
-    db.create_tables([Library, Serie, Album, Author, AlbumAuthor, Publisher, Imprint, Bookmark])
+    db.create_tables([Library, Serie, Album, Author, AlbumAuthor, Publisher, Imprint, Bookmark, History])
     History.create(version=DB_VERSION)
     logger.info("Database '{}' created".format(DB))
 else:
