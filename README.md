@@ -24,9 +24,10 @@ pip install -r requirements.txt
 ### docker
 
 Compose file use two volumes, first one is the path to the comic library, second one is for storing database and thumbnails.
-
-`docker volume create bd-data`
-`docker-compose up -d`
+```
+docker volume create bd-data
+docker-compose up -d
+```
 
 Scan the library from command line:
 
