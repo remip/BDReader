@@ -1,7 +1,7 @@
 FROM python:3-slim
 
 COPY sources.list /etc/apt/
-RUN apt update && apt install -y imagemagick ghostscript unrar libxslt1.1
+RUN apt update && apt install -y imagemagick ghostscript unrar libxslt1.1 curl
 
 WORKDIR /root
 
@@ -14,6 +14,8 @@ ADD static ./static/
 # should be mounted as external volumes later
 ADD Library ./Library/
 ADD data ./data/
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=2 CMD curl -f http://localhost/ || exit 1
 
 EXPOSE 80/tcp
 
