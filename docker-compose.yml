@@ -10,6 +10,16 @@ services:
       - bd-data:/root/data
     ports:
       - "80:80"
+    labels:
+      - autoheal=true
+
+  autoheal:
+    container_name: autoheal
+    image: willfarrell/autoheal
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=autoheal
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
 
 volumes:
   bd-data:
