@@ -7,11 +7,15 @@
   </div>
   <div class="details">
     <h3>{{album.name}}</h3>
-    <p>
+    <table>     
 % if album.volume is not None:
-      Volume {{album.volume}} -
+     <tr><td>Volume</td><td>{{album.volume}}</td></tr>
 % end
-      {{album.pages}} pages - {{album.filetype}}</p>
+     <tr><td>Pages</td><td>{{album.pages}}</td></tr>
+     <tr><td>Format</td><td>{{album.filetype}}</td></tr>
+     <tr><td>Size</td><td>{{sizemb}} MB</td></tr>
+    </table>
+    <br/>
   </div>
 
 

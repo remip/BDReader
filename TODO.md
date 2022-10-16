@@ -15,3 +15,5 @@
 - rebuild thumb cache
 - search with contains and direct link with ==
 - navigate last page and show page number
+- print page loading time
+

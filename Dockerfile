@@ -1,7 +1,11 @@
-FROM python:3-slim
+FROM python:3.9-slim-bullseye
 
 COPY sources.list /etc/apt/
-RUN apt update && apt install -y imagemagick ghostscript unrar libxslt1.1 curl
+RUN apt-get update && apt-get install -y imagemagick ghostscript unrar libxslt1.1 curl
+#raspbian
+#RUN apt install -y libxml2-dev libxslt-dev zlib1g-dev build-essential
+RUN apt-get install -y libopenjp2-7 libwebpdemux2 libjbig0 libtiff5 libwebp6 libwebpmux3 liblcms2-2 libzstd1
+ADD pip.conf /etc/pip.conf
 
 WORKDIR /root
 

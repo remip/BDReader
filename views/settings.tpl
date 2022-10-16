@@ -41,7 +41,11 @@
  <tr><td>pdf</td><td>{{totalPDF}}</td></tr>
  <tr><td>ComicInfo</td><td>{{totalValidated}}</td></tr>
  <tr><td>Authors</td><td>{{totalAuthors}}</td></tr>
+ <tr><td>Complete series</td><td>{{completeSeries}}</td></tr>
+ <tr><td>Series without Bedetheque link</td><td>{{seriesNoLink}}</td></tr>
 </table>
+
+<p><b>Cache:</b> {{cache_used}}/{{cache_total}}
 
 </div>
 

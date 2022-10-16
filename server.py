@@ -287,6 +287,7 @@ def showAlbum(serie,album):
 
     serie = Serie.get(Serie.urlname == serie)
     album = Album.get(Album.urlname == album, Album.serie == serie)
+    sizemb = int(os.stat(os.path.join(LIBRARY, serie.dirname, album.filename)).st_size/1024/1024)
     writers = []
     for writer in Author.select().join(AlbumAuthor).join(Album).where(Album.id == album.id, Author.job == 'writer'):
         writers.append(writer.name)
@@ -298,7 +299,7 @@ def showAlbum(serie,album):
         colorists.append(colorist.name)
 
     return template('album', serie=serie, album=album, writers=writers,
-        pencillers=pencillers, colorists=colorists)
+        pencillers=pencillers, colorists=colorists, sizemb=sizemb)
 
 @route('/read/<serie>/<album>')
 @route('/read/<serie>/<album>/<page>')
@@ -312,6 +313,9 @@ def readAlbum(serie, album, page=1):
 
     return template('read', serie=serie, album=album, page=page)
 
+file_cache = [] # { file, object, filelist}
+CACHE_SIZE = 5
+
 @route('/getpage/<serie>/<album>/<page>')
 def getPage(serie, album, page):
     logger.debug("getpage: start"); ts_start = time.time()
@@ -321,7 +325,15 @@ def getPage(serie, album, page):
 
     file = os.path.join(LIBRARY, serie.dirname, album.filename)
 
+    # search in cached opened archives
+    for item in file_cache:
+        if item["file"] == file:
+            image = io.BytesIO(item["compress"].read(item["filelist"][page - 1]))
+            response.headers['Content-Type'] = filetype.guess(image.getvalue())
+            logger.debug("getpage: zip/rar end {}s".format(time.time()-ts_start))
+            return image.getvalue()
 
+    # if not in cache
     try:
         kind = filetype.guess(file)
         if kind.mime == 'application/zip' or kind.mime == 'application/x-rar-compressed':
@@ -332,8 +344,14 @@ def getPage(serie, album, page):
                 compress = rarfile.RarFile(file,'r')
             #find the page
             filelist = [f for f in sorted(compress.namelist()) if os.path.splitext(f)[1] in IMGEXT]
+
+            # cache the archive
+            file_cache.insert(0, {'file': file, 'filelist': filelist, 'compress': compress}) # insert at beginning
+            if len(file_cache) > CACHE_SIZE:
+                o = file_cache.remove(CACHE_SIZE) # remove last
+                o['object'].close()
+
             image = io.BytesIO(compress.read(filelist[page - 1]))
-            compress.close()
             response.headers['Content-Type'] = filetype.guess(image.getvalue())
             logger.debug("getpage: zip/rar end {}s".format(time.time()-ts_start))
             return image.getvalue()
@@ -439,13 +457,17 @@ def settings(newSeries = 0, newAlbums = 0, delSeries = 0, delAlbums = 0):
     totalCBR = Album.select().where(Album.filetype == 'cbr').count()
     totalPDF = Album.select().where(Album.filetype == 'pdf').count()
     totalAuthors = Author.select().count()
+    completeSeries = Serie.select().where(Serie.complete).count()
+    seriesNoLink = Serie.select().where(Serie.link == '').count()
 
     totalSize = humanize.naturalsize(get_size(LIBRARY))
 
     return template('settings', newAlbums=newAlbums, newSeries=newSeries,
         delSeries = delSeries, delAlbums = delAlbums,
         totalAlbums=totalAlbums, totalSeries=totalSeries, totalAuthors=totalAuthors,
-        totalValidated=totalValidated, totalCBZ=totalCBZ, totalCBR=totalCBR, totalPDF=totalPDF, totalSize=totalSize)
+        totalValidated=totalValidated, totalCBZ=totalCBZ, totalCBR=totalCBR, totalPDF=totalPDF, totalSize=totalSize,
+        cache_used=len(file_cache), cache_total=CACHE_SIZE, completeSeries=completeSeries,
+        seriesNoLink=seriesNoLink)
 
 @route('/search/<field>/<term>')
 def fieldsearch(field, term):
@@ -944,6 +966,69 @@ def scrapAlbum(text):
     return list
 
 
+
+@route('/missing')
+def findMissingAlbums():
+    series = Serie.select(Serie, fn.Count(Album.id).alias('count')).join(Album).where(Serie.complete == False).group_by(Serie).order_by(Serie.urlname)
+    return template('missing', series=series)
+
+@route('/missinginfo/<serie>')
+def getMissingInfo(serie):
+    serie = Serie.select(Serie, fn.Count(Album.id).alias('count')).join(Album).where(Serie.urlname == serie).get()
+    albums = Album.select(Album, Serie).join(Serie).where(Serie.id == serie.id).order_by(Album.volume.cast('int'), Album.name)
+
+    volumes = []
+    for album in albums:
+        volumes.append(album.volume)
+
+    online_complete = None
+    online_nb = None
+    missing = []
+    url = ""
+
+    if serie.link != "":
+                
+        r2 = requests.get(serie.link, allow_redirects=False)
+        url = re.sub(r"(.*).html$", r"\1__10000.html", r2.headers["Location"])
+        r3 = requests.get(url)
+
+        m = re.search(r"<span class=\"parution-serie\">(.*?)<\/span>", r3.text)
+        if m:            
+            if m.group(1) in ["Série finie", "One shot", "Série abandonnée", "Série suspendue"]:
+                online_complete = True
+        m = re.search(r"Tomes :<\/label>(\d+)<\/li>", r3.text)
+        if m:
+            online_nb = int(m.group(1))
+        res = re.findall(r"<span itemprop=\"name\">\s+(.*)<span class=\"numa\">(.*?)<\/span>\s+\.\s+(.*?)\s*<\/span>", r3.text)                
+
+        for m in res:
+            num = m[1] if m[0] == "" else m[0]
+            title = m[2]
+
+            if num not in volumes:
+                missing.append({"volume": num, "title": title})
+
+    return template('missinginfo', serie=serie, albums=albums, 
+        online_complete=online_complete, online_nb=online_nb,
+        missing=missing, url=url)
+
+
+# https://www.bedetheque.com/ajax/series?term=namibia
+# [{"id":"23675","label":"Namibia (Kenya - Saison 2)","value":"Namibia (Kenya - Saison 2)","desc":"skin\/flags\/France.png"}]
+
+# https://www.bedetheque.com/serie/index/s/23675
+# 301 -> 
+# https://www.bedetheque.com/serie-23675-BD-Namibia-Kenya-Saison-2.html
+# https://www.bedetheque.com/serie-12-BD-Thorgal__10000.html
+# <span class="parution-serie">Série finie</span>
+# <li><label>Tomes :</label>5</li>
+#<span itemprop="name">
+# 2<span class="numa"></span>
+# .         
+# Épisode 2 
+# </span>
+
+
 if len(sys.argv) > 1 and sys.argv[1] == '--scan':
     print("Library scan")
     scanLibrary()
@@ -967,7 +1052,61 @@ elif len(sys.argv) > 1 and sys.argv[1] == '--convert':
 elif len(sys.argv) > 1 and sys.argv[1] == '--todo':
     for album in Album.select().where(Album.validated==False).order_by(Album.serie, Album.name):
         print("{} - {} ({})".format(album.serie.name, album.name, album.filename))
+    sys.exit(0)  
+elif len(sys.argv) > 1 and sys.argv[1] == '--validateserie':
+    series = Serie.select(Serie).where(Serie.link == '').order_by(Serie.urlname)
+    for serie in series:
+        print(f"\n{serie.name}")        
+        r = requests.get(f"https://www.bedetheque.com/ajax/series?term={serie.name}")
+        c = 0
+        for entry in r.json():
+            print(f"{c} - id: {entry['id']} label: {entry['label']}")
+            c += 1
+        print("- - - - - - - - - - - - - - -")
+        print("o - enter other bedetheque id")
+        print("n - next entry")        
+        id = ""
+        name = ""
+        valid = False
+        while valid == False:
+            i = input("Select Serie: ")
+            if i != "o" and i != "n":
+                try:
+                    i = int(i)
+                except:
+                    pass
+                else:
+                    if i >= 0 and i < c:
+                        valid = True
+                        id = r.json()[i]["id"]
+                        name = r.json()[i]["label"]
+            else:
+                valid = True
+        if i == "o":            
+            valid = False
+            while valid == False:
+                i = input ("Bedetheque serie id: ")
+                try:
+                    i = int(i)
+                except:
+                    pass
+                else:
+                    if i > 0:
+                        valid = True
+                        id = str(i)
+                        name = input("Serie's name: ")
+
+        if i != "n":
+            serie.link = f"https://www.bedetheque.com/serie/index/s/{id}"
+            serie.name = name
+            serie.urlname = createUrl(name)
+            serie.save()
+
+
+
+        
     sys.exit(0)
+
 
 
 convert_lock = Lock()

@@ -111,6 +111,16 @@ body {
   background-color: white;
 }
 
+.modal-content-big {
+  border: 1px solid gray;
+  box-shadow: 10px 10px 5px #aaa;
+  margin: 5% auto;
+  width: 50%;
+  /*height: 80%;*/
+  padding: 20px;
+  background-color: white;
+}
+
 .close {
     color: #aaa;
     float: right;
@@ -216,4 +226,11 @@ body {
     background-repeat: no-repeat;
     background-position: left;
     background-size: 30px 30px;
+}
+
+.table th, .table td {
+  border: solid 1px gray;
+}
+.table {
+  border-collapse: collapse;
 }

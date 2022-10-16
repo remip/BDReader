@@ -122,7 +122,7 @@
       <button id="pageStart" class="button" onclick="showPage(1);">Go to the first page</button>
       <button id="pageEnd"  class="button" onclick="showPage({{album.pages}});">Go to last page</button>
       <p>&nbsp;</p>
-      <button id="close"  class="button" onclick="history.back()">Close the book</button>
+      <a id="close"  class="button" href="/serie/{{serie.urlname}}">Close the book</a>
     </div>
   </div>
   <div class="optionbottom"></div>

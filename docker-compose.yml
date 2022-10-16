@@ -5,22 +5,23 @@ services:
   bdreader:
     build: .
     container_name: bdreader
+    restart: unless-stopped
     volumes:
-      - D:\BD\Librarie:/root/Library
+      - /home/pi/Library:/root/Library
       - bd-data:/root/data
     ports:
-      - "80:80"
+      - "8080:80"
     labels:
       - autoheal=true
-
+      
   autoheal:
     container_name: autoheal
     image: willfarrell/autoheal
+    restart: always
     environment:
       - AUTOHEAL_CONTAINER_LABEL=autoheal
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-
 volumes:
   bd-data:
     external: true
