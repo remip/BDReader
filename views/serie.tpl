@@ -45,6 +45,11 @@
     <a href="/complete/{{serie.urlname}}">Set/unset as complete</a>
   </div>
 
+  <div class="icontitle">
+    <img src="/static/icons/internet.png" title="rename" class="icon" />
+    <a href="#" onclick="checkMissing('{{serie.urlname}}');">Check online</a>
+  </div>
+
 </div>
 
 
@@ -83,7 +88,31 @@
   </div>
 </div>
 
+<div id="checkMissing" class="modal">
+  <div class="modal-content-big">
+    <span class="close" onclick="hideModal('checkMissing');">&times;</span>
+    <div class="icontitle">
+      <img src="/static/icons/idea.svg" title="Search" class="icon">
+      <h2>Check online</h2>
+    </div>
+    <div class="content" id="missingContent">
+
+    </div>
+  </div>
+</div>
+
 <script type="text/javascript">
+
+function checkMissing(urlname) {
+
+  $("#missingContent").html("");
+
+  $.get("/missinginfo/" + urlname, function(data) {
+      $("#missingContent").html(data)    
+  });
+
+  return showModal('checkMissing');
+}
 
 function scrapSerie() {
   serie = $("#name").val();

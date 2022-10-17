@@ -617,7 +617,7 @@ def scanLibrary():
 
     dbseries = []
     for serie in Serie.select():
-        dbseries.append(serie.name)
+        dbseries.append(serie.dirname)
 
     dbalbums = []
     for album in Album.select():
@@ -635,7 +635,11 @@ def scanLibrary():
             logger.info("Add Serie {} [{}]".format(folder, urlname))
             newSeries += 1
         else:
-            dbseries.remove(folder)
+            try:
+                dbseries.remove(folder)
+            except Exception as e:
+                print("folder: {}\n{}".format(folder, str(e)))
+                raise(e)
 
         re_title = re.escape(serie.dirname) + r' - T(\d+) - (.*)\.\w{3}'
 
@@ -1028,6 +1032,53 @@ def getMissingInfo(serie):
 # Épisode 2 
 # </span>
 
+# text version
+def findMissing():
+
+    series = Serie.select(Serie, fn.Count(Album.id).alias('count')).join(Album).where(Serie.complete == False).group_by(Serie).order_by(Serie.urlname)    
+
+    for serie in series:
+        print("{} - {} albums".format(serie.name, serie.count))
+
+        albums = Album.select(Album, Serie).join(Serie).where(Serie.id == serie.id).order_by(Album.volume.cast('int'), Album.name)
+
+        volumes = []
+        for album in albums:
+            volumes.append(album.volume)
+            #print("#{} {}".format(album.volume, album.name))
+
+        online_complete = None
+        online_nb = None
+        missing = []
+        url = ""
+
+        if serie.link != "":
+                    
+            r2 = requests.get(serie.link, allow_redirects=False)
+            url = re.sub(r"(.*).html$", r"\1__10000.html", r2.headers["Location"])
+            r3 = requests.get(url)
+
+            m = re.search(r"<span class=\"parution-serie\">(.*?)<\/span>", r3.text)
+            if m:            
+                if m.group(1) in ["Série finie", "One shot", "Série abandonnée", "Série suspendue"]:
+                    online_complete = True                    
+            m = re.search(r"Tomes :<\/label>(\d+)<\/li>", r3.text)
+            if m:
+                online_nb = int(m.group(1))
+            res = re.findall(r"<span itemprop=\"name\">\s+(.*)<span class=\"numa\">(.*?)<\/span>\s+\.\s+(.*?)\s*<\/span>", r3.text)                
+
+            print("online: {} volumes {}".format(online_nb, "complete" if online_complete else ""))
+
+            for m in res:
+                num = m[1] if m[0] == "" else m[0]
+                title = m[2]
+
+                if num not in volumes:
+                    missing.append({"volume": num, "title": title})
+                    print("#{} {}".format(num, title))
+        #input("#### enter to continue ####")
+        print()
+        time.sleep(2)
 
 if len(sys.argv) > 1 and sys.argv[1] == '--scan':
     print("Library scan")
@@ -1053,6 +1104,8 @@ elif len(sys.argv) > 1 and sys.argv[1] == '--todo':
     for album in Album.select().where(Album.validated==False).order_by(Album.serie, Album.name):
         print("{} - {} ({})".format(album.serie.name, album.name, album.filename))
     sys.exit(0)  
+elif len(sys.argv) > 1 and sys.argv[1] == '--missing':
+    findMissing()
 elif len(sys.argv) > 1 and sys.argv[1] == '--validateserie':
     series = Serie.select(Serie).where(Serie.link == '').order_by(Serie.urlname)
     for serie in series:
